@@ -17,7 +17,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # YouTube sometimes refuses a server's downloads altogether ("sign in to confirm you're not a bot"). It is a
 # refusal of the server, not of one video, so once it happens YouTube links are turned away at once for a few
 # minutes, with a clear message, instead of each one waiting to fail. Then the next link simply tries again.
-YT_PAUSE = 600
+YT_PAUSE = 60
 _yt_refused_until = 0.0
 YT_BLOCKED = ("YouTube isn't letting PeakCut download videos right now. Upload the video file instead, or use a "
               "Twitch or Kick link. YouTube links will be tried again in a few minutes.")
@@ -105,9 +105,14 @@ def _ydl(opts):
         "source_address": "0.0.0.0",
         "downloader_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
         "postprocessor_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
-        "remote_components": {"ejs": "github"}, "js_runtimes": {"node": {}},
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv"]}},
         "concurrent_fragment_downloads": 4,
     }
+    opts = dict(opts)
+    if "extractor_args" in opts:
+        ea = dict(base["extractor_args"])
+        ea.update(opts.pop("extractor_args"))
+        base["extractor_args"] = ea
     base.update(opts)
     return yt_dlp.YoutubeDL(base)
 
