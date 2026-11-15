@@ -98,11 +98,18 @@ class _Quiet:
 def _ydl(opts):
     import yt_dlp
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
-    return yt_dlp.YoutubeDL({"noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
-                             "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 60,
-                             "retries": 10, "fragment_retries": 10,
-                             "remote_components": {"ejs": "github"}, "js_runtimes": {"node": {}},
-                             "concurrent_fragment_downloads": 4, **opts})
+    base = {
+        "noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
+        "extract_flat": "in_playlist", "playlistend": 1, "socket_timeout": 60,
+        "retries": 10, "fragment_retries": 10,
+        "source_address": "0.0.0.0",
+        "downloader_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
+        "postprocessor_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
+        "remote_components": {"ejs": "github"}, "js_runtimes": {"node": {}},
+        "concurrent_fragment_downloads": 4,
+    }
+    base.update(opts)
+    return yt_dlp.YoutubeDL(base)
 
 
 def _video_format(height):
@@ -273,15 +280,43 @@ def download_section(url: str, out_dir: Path, stem: str, start: float, end: floa
     """Just one stretch of the video. The cut lands on a keyframe, so find_offset() pins the true start."""
     from yt_dlp.utils import download_range_func
     out_dir.mkdir(parents=True, exist_ok=True)
-    with _youtube_guard(url), _ydl({"format": _video_format(height), "merge_output_format": "mp4",
-               "outtmpl": str(out_dir / (stem + ".%(ext)s")),
-               "download_ranges": download_range_func(None, [(max(0.0, start), end)])}) as ydl:
-        ydl.download([url])
+    attempts = [
+        {"format": _video_format(height)},
+        {"format": f"bv*[height<={height}]+ba/b[height<={height}]/b", "extractor_args": {"youtube": {"player_client": ["mweb", "android"]}}},
+        {"format": f"b[height<={height}]/b", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
+    ]
+    last_err = None
+    for attempt_idx, opt in enumerate(attempts):
+        try:
+            for partial in out_dir.glob(stem + ".*.part"):
+                partial.unlink(missing_ok=True)
+            for partial in out_dir.glob(stem + ".*.ytdl"):
+                partial.unlink(missing_ok=True)
+
+            ydl_opts = {
+                "merge_output_format": "mp4",
+                "outtmpl": str(out_dir / (stem + ".%(ext)s")),
+                "download_ranges": download_range_func(None, [(max(0.0, start), end)]),
+                **opt,
+            }
+            with _youtube_guard(url), _ydl(ydl_opts) as ydl:
+                ydl.download([url])
+            res = _biggest(out_dir, stem)
+            if res.is_file() and res.stat().st_size > 1024:
+                return res
+        except Exception as e:
+            last_err = e
+            time.sleep(1.0 + attempt_idx)
+            continue
+    if last_err:
+        raise last_err
     return _biggest(out_dir, stem)
 
 
 def find_offset(full: np.ndarray, part: np.ndarray, expected: float, search=20.0) -> float:
     """Where in the full audio (seconds) a downloaded piece really begins, by matching the sound itself."""
+    if full is None or len(full) == 0:
+        return expected
     n = min(len(part), 30 * 16000)
     a0 = max(0, int((expected - search) * 16000))
     hay = full[a0: int((expected + search) * 16000) + n].astype(np.float32)

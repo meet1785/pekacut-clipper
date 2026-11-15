@@ -347,9 +347,14 @@ def request_render(jid, cid, changes: dict):
     for k in ("start", "end"):
         if k in changes:
             new[k] = round(float(changes[k]), 2)
-    if "src_offset" in clip:  # live clip: can only move inside the saved piece of stream
+    if job.get("kind") == "live" and "src_offset" in clip:  # live clip: can only move inside the saved piece of stream
         new["start"] = max(new["start"], clip["src_offset"])
         new["end"] = min(new["end"], clip["src_end"])
+    elif "src_offset" in clip and (new["start"] < clip["src_offset"] or new["end"] > clip.get("src_end", float("inf"))):
+        # Clip times moved outside cached piece, clear piece to re-fetch on demand
+        new.pop("src", None)
+        new.pop("src_offset", None)
+        new.pop("src_end", None)
     if not (math.isfinite(new["start"]) and math.isfinite(new["end"])) or new["start"] < 0:
         raise ValueError("Those times aren't valid.")
     if not 3 <= new["end"] - new["start"] <= 180:
@@ -361,7 +366,7 @@ def request_render(jid, cid, changes: dict):
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
         new["layout"] = DEFAULTS["layout"]
-    clip.update(new, status="queued")
+    clip.update(new, status="queued", error=None)
     save(job)
     _q.put(("clip", jid, cid))
 
@@ -369,8 +374,15 @@ def request_render(jid, cid, changes: dict):
 def render_one(job, clip, words):
     d = Path(job["dir"])
     clip["status"] = "rendering"
+    clip["error"] = None
     save(job)
     try:
+        # If video piece is missing on disk, fetch it on-demand (e.g. after transient 403 or retry)
+        if not clip.get("src") or not Path(clip["src"]).is_file():
+            if (job.get("source") or {}).get("type") == "url":
+                ok = _fetch_piece(job, clip, None)
+                if not ok or not clip.get("src") or not Path(clip["src"]).is_file():
+                    raise RuntimeError(clip.get("error") or "Could not fetch video piece for this clip.")
         off = clip.get("src_offset", 0.0)
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
         if not clip.get("src"):
@@ -462,22 +474,30 @@ def _fetch_piece(job, clip, full_audio):
     """Long videos: download just this clip's stretch and pin down exactly where it starts."""
     d = Path(job["dir"])
     o = job["options"]
-    try:
-        want = max(0.0, clip["start"] - PAD)
-        piece = media.download_section(job["source"]["url"], d / "clips", f"{clip['id']}.src", want,
-                                       min(job["duration"], clip["end"] + PAD), int(o["quality"]))
-        wav = d / "clips" / f"{clip['id']}.wav"
-        media.extract_audio(piece, wav)
-        part = media.load_audio(wav)
-        wav.unlink(missing_ok=True)
-        meta = media.probe(piece)
-        off = media.find_offset(full_audio, part, want)
-        clip.update(src=str(piece), src_offset=round(off, 2), src_end=round(off + meta["duration"], 2))
-        clip["start"], clip["end"] = max(clip["start"], clip["src_offset"]), min(clip["end"], clip["src_end"])
-        job.setdefault("width", meta["width"])
-        job.setdefault("height", meta["height"])
-    except Exception as e:  # noqa: BLE001
-        clip.update(status="error", error=f"Could not fetch this part of the video: {safe.friendly(e, 250)}")
+    want = max(0.0, clip["start"] - PAD)
+    retries = 2
+    for attempt in range(retries):
+        try:
+            piece = media.download_section(job["source"]["url"], d / "clips", f"{clip['id']}.src", want,
+                                           min(job["duration"], clip["end"] + PAD), int(o["quality"]))
+            wav = d / "clips" / f"{clip['id']}.wav"
+            media.extract_audio(piece, wav)
+            part = media.load_audio(wav)
+            wav.unlink(missing_ok=True)
+            meta = media.probe(piece)
+            off = media.find_offset(full_audio, part, want)
+            clip.update(src=str(piece), src_offset=round(off, 2), src_end=round(off + meta["duration"], 2))
+            clip["start"], clip["end"] = max(clip["start"], clip["src_offset"]), min(clip["end"], clip["src_end"])
+            job.setdefault("width", meta["width"])
+            job.setdefault("height", meta["height"])
+            clip.pop("error", None)
+            return True
+        except Exception as e:  # noqa: BLE001
+            if attempt == retries - 1:
+                clip.update(status="error", error=f"Could not fetch this part of the video: {safe.friendly(e, 250)}")
+                return False
+            time.sleep(1.5)
+    return False
 
 
 BLOCK = 10 * 60         # long videos are transcribed and clipped one block at a time
