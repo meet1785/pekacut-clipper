@@ -38,7 +38,7 @@ def _mirror(p):
     job = jobs.get(p["job"])
     clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
     if clip is not None:
-        clip.setdefault("posts", {})[p["id"]] = {k: p.get(k) for k in ("account_name", "platform", "status", "url", "due_at", "error")}
+        clip.setdefault("posts", {})[p["id"]] = {k: p.get(k) for k in ("account_name", "platform", "status", "url", "due_at", "publish_at", "error")}
         jobs.save(job)
 
 
@@ -54,9 +54,10 @@ def _next_slot(account_id, gap_min, cap):
     return t
 
 
-def enqueue(job, clip, account_ids, now=False) -> list:
+def enqueue(job, clip, account_ids, now=False, due_at=None, cloud=True) -> list:
     c = creators.get(job["creator"]) or creators.DEFAULTS
     made = []
+    to_post = []
     with _lock:
         for aid in account_ids:
             acc = accounts.get(aid)
@@ -65,16 +66,32 @@ def enqueue(job, clip, account_ids, now=False) -> list:
             if any(p["job"] == job["id"] and p["clip"] == clip["id"] and p["account"] == aid
                    and p["status"] in OPEN + ("posted",) for p in _mine()):
                 continue  # never post the same clip to the same account twice
-            due = time.time() if now else _next_slot(aid, c["post_gap_min"], c["daily_cap"])
+            publish_at = None
+            if due_at is not None:
+                due = float(due_at)
+                if acc["platform"] == "youtube" and cloud:
+                    import datetime
+                    dt = datetime.datetime.fromtimestamp(due, tz=datetime.timezone.utc)
+                    publish_at = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            elif now:
+                due = time.time()
+            else:
+                due = _next_slot(aid, c["post_gap_min"], c["daily_cap"])
             p = {"id": secrets.token_hex(8), "user": ctx.uid(), "job": job["id"], "clip": clip["id"], "creator": job["creator"],
-                 "account": aid, "account_name": acc["name"], "platform": acc["platform"], "status": "scheduled",
-                 "due_at": due, "created": time.time(), "title": clip.get("title") or clip.get("hook") or "Clip",
+                 "account": aid, "account_name": acc["name"], "platform": acc["platform"],
+                 "status": "posting" if (now or publish_at) else "scheduled",
+                 "due_at": due, "publish_at": publish_at, "created": time.time(),
+                 "title": clip.get("title") or clip.get("hook") or "Clip",
                  "score": clip.get("score", 0), "tries": 0, "url": "", "remote_id": "", "error": None, "views": None}
             _posts.append(p)
             made.append(p)
+            if now or publish_at:
+                to_post.append(p)
         _save()
     for p in made:
         _mirror(p)
+    for p in to_post:
+        threading.Thread(target=_post, args=(p,), daemon=True).start()
     return made
 
 
@@ -96,38 +113,42 @@ def _caption(clip, creator):
 
 
 def _post(p):
-    job = jobs.get(p["job"])
-    clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
-    acc = accounts.get(p["account"])
-    try:
-        if not clip or clip.get("status") != "done":
-            raise RuntimeError("The clip no longer exists or is not finished.")
-        if not acc:
-            raise RuntimeError("That account was disconnected.")
-        path = Path(job["dir"]) / "clips" / clip["file"]
-        creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
-        title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
-        if acc["platform"] == "youtube":
-            rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("hashtags", []), creator["privacy"])
-        elif acc["platform"] == "instagram":
-            rid, url = accounts.instagram_upload(acc, path, f"{title}\n\n{cap}", job["id"])
-        elif acc["platform"] == "tiktok":
-            rid, url = accounts.tiktok_upload(acc, path, f"{title}\n\n{cap}", creator["privacy"])
-        else:
-            raise RuntimeError("That kind of account is no longer supported.")
-        p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)
-        creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
-    except Exception as e:  # noqa: BLE001
-        p["tries"] += 1
-        p["error"] = str(e)[-300:]
-        if p["tries"] < 3 and clip and acc:
-            p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
-        else:
-            p["status"] = "failed"
-            creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
-            alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
-    _save()
-    _mirror(p)
+    with ctx.as_user(p.get("user", "u_local")):
+        job = jobs.get(p["job"])
+        clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
+        acc = accounts.get(p["account"])
+        try:
+            if not clip or clip.get("status") != "done":
+                raise RuntimeError("The clip no longer exists or is not finished.")
+            if not acc:
+                raise RuntimeError("That account was disconnected.")
+            path = Path(job["dir"]) / "clips" / clip["file"]
+            creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
+            title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
+            if acc["platform"] == "youtube":
+                rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("hashtags", []), creator["privacy"], publish_at=p.get("publish_at"))
+            elif acc["platform"] == "instagram":
+                rid, url = accounts.instagram_upload(acc, path, f"{title}\n\n{cap}", job["id"])
+            elif acc["platform"] == "tiktok":
+                rid, url = accounts.tiktok_upload(acc, path, f"{title}\n\n{cap}", creator["privacy"])
+            else:
+                raise RuntimeError("That kind of account is no longer supported.")
+            p.update(status="posted", posted_at=time.time(), remote_id=rid, url=url, error=None)
+            if p.get("publish_at"):
+                creators.log(p["creator"], f"Cloud-Scheduled on {acc['name']} for {p['publish_at']}: {title}")
+            else:
+                creators.log(p["creator"], f"Posted to {acc['name']}: {title}")
+        except Exception as e:  # noqa: BLE001
+            p["tries"] += 1
+            p["error"] = str(e)[-300:]
+            if p["tries"] < 3 and clip and acc:
+                p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
+            else:
+                p["status"] = "failed"
+                creators.log(p["creator"], f"Post failed on {p['account_name']}: {p['error']}")
+                alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
+        _save()
+        _mirror(p)
 
 
 def _run():

@@ -1666,8 +1666,9 @@ function scoreCls(s) { return s >= 80 ? "s-hi" : s >= 60 ? "s-mid" : ""; }
 function postPills(c) {
   return Object.values(c.posts || {}).filter(p => p.status !== "cancelled").map(p => {
     const cls = p.status === "posted" ? "ok" : p.status === "failed" ? "bad" : "warn";
-    const txt = `${esc(p.account_name)} · ${p.status === "scheduled" ? clock(p.due_at) : p.status}`;
-    return p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>`;
+    const statusLabel = p.publish_at && p.status === "posted" ? ("Scheduled " + clock(p.due_at)) : p.status === "scheduled" ? clock(p.due_at) : p.status;
+    const txt = `${esc(p.account_name)} · ${statusLabel}`;
+    return p.url ? `<a class="pill ${cls}" href="${esc(p.url)}" target="_blank" rel="noopener" title="${p.publish_at ? 'Cloud-scheduled on YouTube' : ''}">${txt}</a>` : `<span class="pill ${cls}" title="${esc(p.error || "")}">${txt}</span>`;
   }).join("");
 }
 function clipHtml(j, c) {
@@ -2145,7 +2146,7 @@ function drawClipDlg(full) {
         <h3>Post it</h3>
         <div id="dposts" class="row" style="gap:4px"></div>
         ${S.accounts.length ? `<div class="row">${S.accounts.map(a => `<label class="ck"><input type="checkbox" data-pacc value="${esc(a.id)}">${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>
-          <div class="row"><button class="btn primary" data-act="postnow">${ic("send")}Post now</button><button class="btn" data-act="postqueue">Add to queue</button></div>`
+          <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center"><button class="btn primary" data-act="postnow">${ic("send")}Post now</button><button class="btn" data-act="postqueue">Add to queue</button><div class="row" style="gap:4px;align-items:center"><input type="datetime-local" data-f="schedtime" class="input" style="padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);color:inherit" title="Pick schedule time"><button class="btn" data-act="postschedule">${ic("clock")}Schedule</button></div></div>`
           : `<p class="help">No accounts connected yet. Connect one in Settings.</p>`}
         <div class="row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--line)">
           ${c.status === "done" ? `<a class="btn" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>` : ""}
@@ -2440,12 +2441,20 @@ document.addEventListener("click", async e => {
       const body = {}; $$("#clipdlg [data-f]").forEach(i => body[i.dataset.f] = i.type === "number" ? Number(i.value) : i.value);
       await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, body); toast("Re-making the clip…", "ok"); return tick();
     }
-    if (a === "postnow" || a === "postqueue") {
+    if (a === "postnow" || a === "postqueue" || a === "postschedule") {
       const accs = $$("#clipdlg [data-pacc]:checked").map(i => i.value);
       if (!accs.length) return toast("Tick at least one account first.", "bad");
+      let due_at = null;
+      if (a === "postschedule") {
+        const val = $("#clipdlg [data-f='schedtime']")?.value;
+        if (!val) return toast("Pick a date and time to schedule.", "bad");
+        const dt = new Date(val);
+        if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) return toast("Pick a future time.", "bad");
+        due_at = dt.getTime() / 1000;
+      }
       if (a === "postnow" && !await ask("Post now?", `This clip goes to ${accs.length} account${accs.length > 1 ? "s" : ""} straight away.`, "Post now")) return;
-      await send("/api/posts", {job:D.jid, clip:D.cid, accounts:accs, now:a === "postnow"});
-      toast(a === "postnow" ? "Posting now" : "Added to the queue", "ok"); return tick();
+      await send("/api/posts", {job:D.jid, clip:D.cid, accounts:accs, now:a === "postnow", due_at: due_at});
+      toast(a === "postnow" ? "Posting now" : a === "postschedule" ? "Scheduled for " + clock(due_at) : "Added to the queue", "ok"); return tick();
     }
   } catch (err) { b.disabled = false; toast(err.message, "bad"); }
 });
