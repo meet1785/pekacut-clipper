@@ -337,6 +337,7 @@ def _filter(layout, fg_h):
 
 
 _qsv_ok = None
+_amf_ok = None   # AMD VCE hardware encoder (Radeon / Vega iGPU): tried after QSV, before pure-CPU x264
 RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a frozen encoder is stopped, not waited on
 
 
@@ -362,7 +363,7 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
 
 def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str,
                srt: str = "", vtt: str = "") -> dict:
-    global _qsv_ok
+    global _qsv_ok, _amf_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     if srt:
         (work / f"{name}.srt").write_text(srt, encoding="utf-8")
@@ -375,10 +376,15 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
             "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-pix_fmt"]
+    # Encoder priority: QSV (Intel) → AMF (AMD Vega / Radeon GPU) → libx264 (CPU fallback).
+    # AMF offloads encoding to the GPU's dedicated video-codec block, keeping the CPU free for
+    # Whisper transcription and reducing heat substantially on integrated-GPU laptops.
     encoders = []
     if _qsv_ok is not False:
         encoders.append(("qsv", ["nv12", "-c:v", "h264_qsv", "-global_quality", "23", "-preset", "fast"]))
-    encoders.append(("x264", ["yuv420p", "-c:v", "libx264", "-crf", "21", "-preset", "veryfast"]))
+    if _amf_ok is not False:
+        encoders.append(("amf", ["yuv420p", "-c:v", "h264_amf", "-quality", "speed", "-b:v", "5M"]))
+    encoders.append(("x264", ["yuv420p", "-c:v", "libx264", "-crf", "23", "-preset", "faster"]))
     err = None
     for label, enc in encoders:
         p = subprocess.run(base + enc + [f"{name}.mp4"], cwd=work, capture_output=True, text=True,
@@ -386,10 +392,14 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
         if p.returncode == 0:
             if label == "qsv":
                 _qsv_ok = True
+            elif label == "amf":
+                _amf_ok = True
             break
         err = p.stderr[-1200:]
         if label == "qsv":
             _qsv_ok = False
+        elif label == "amf":
+            _amf_ok = False
     else:
         raise RuntimeError(f"Render failed: {err}")
     cover_t = min(1.2, (end - start) / 2)
