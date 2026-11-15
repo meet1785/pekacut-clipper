@@ -108,6 +108,105 @@ def _groups(words, per):
     return out
 
 
+def _srt_time(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        s += 1
+        ms -= 1000
+    if s >= 60:
+        m += 1
+        s -= 60
+    if m >= 60:
+        h += 1
+        m -= 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _vtt_time(sec: float) -> str:
+    sec = max(0.0, float(sec))
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    ms = int(round((sec - int(sec)) * 1000))
+    if ms >= 1000:
+        s += 1
+        ms -= 1000
+    if s >= 60:
+        m += 1
+        s -= 60
+    if m >= 60:
+        h += 1
+        m -= 60
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def _sub_groups(words, max_words=6, max_chars=36):
+    out, cur = [], []
+    for w in words:
+        if cur and (len(cur) >= max_words
+                    or sum(len(x["w"]) for x in cur) + len(w["w"]) + len(cur) > max_chars
+                    or w["s"] - cur[-1]["e"] > 0.5
+                    or cur[-1]["w"][-1:] in ".?!"):
+            out.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def build_srt(words: list, start: float, end: float) -> str:
+    """Builds standard SubRip (.srt) subtitle cues relative to the clip start time."""
+    inside = [dict(w, w=_clean(w["w"])) for w in words if w.get("s", 0) >= start - 0.05 and w.get("s", 0) < end]
+    inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
+    for i, w in enumerate(inside[:-1]):
+        w["e"] = max(w["s"], min(w["e"], inside[i + 1]["s"]))
+    groups = _sub_groups(inside)
+    blocks = []
+    dur = max(0.0, end - start)
+    for idx, g in enumerate(groups, 1):
+        g_start = max(0.0, g[0]["s"] - start)
+        next_s = groups[idx][0]["s"] if idx < len(groups) else end
+        raw_end = min(g[-1]["e"] + 0.15, next_s) - start
+        g_end = min(max(g_start + 0.2, raw_end), dur)
+        if g_end <= g_start:
+            g_end = min(g_start + 0.2, dur)
+        text = " ".join(x["w"] for x in g).strip()
+        if not text:
+            continue
+        blocks.append(f"{idx}\n{_srt_time(g_start)} --> {_srt_time(g_end)}\n{text}")
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def build_vtt(words: list, start: float, end: float) -> str:
+    """Builds standard WebVTT (.vtt) subtitle cues relative to the clip start time."""
+    inside = [dict(w, w=_clean(w["w"])) for w in words if w.get("s", 0) >= start - 0.05 and w.get("s", 0) < end]
+    inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
+    for i, w in enumerate(inside[:-1]):
+        w["e"] = max(w["s"], min(w["e"], inside[i + 1]["s"]))
+    groups = _sub_groups(inside)
+    if not groups:
+        return "WEBVTT\n"
+    blocks = ["WEBVTT"]
+    dur = max(0.0, end - start)
+    for idx, g in enumerate(groups, 1):
+        g_start = max(0.0, g[0]["s"] - start)
+        next_s = groups[idx][0]["s"] if idx < len(groups) else end
+        raw_end = min(g[-1]["e"] + 0.15, next_s) - start
+        g_end = min(max(g_start + 0.2, raw_end), dur)
+        if g_end <= g_start:
+            g_end = min(g_start + 0.2, dur)
+        text = " ".join(x["w"] for x in g).strip()
+        if not text:
+            continue
+        blocks.append(f"{idx}\n{_vtt_time(g_start)} --> {_vtt_time(g_end)}\n{text}")
+    return "\n\n".join(blocks) + "\n"
+
+
 def geometry(src_w, src_h, layout):
     """Where the video sits in the 1080x1920 frame, and where hook and captions go."""
     if src_h >= src_w and layout != "crop":
@@ -242,26 +341,33 @@ RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a fro
 
 
 def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int) -> dict:
-    """Writes <name>.mp4, <name>.jpg and <name>.ass into out_dir. Returns file names."""
+    """Writes <name>.mp4, <name>.jpg, <name>.ass, <name>.srt and <name>.vtt into out_dir. Returns file names."""
     out_dir.mkdir(parents=True, exist_ok=True)
     start, end = clip["start"], clip["end"]
     layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"))
     ass = build_ass(words, start, end, clip.get("hook", ""), clip.get("style", "bounce"),
                     clip.get("highlight_words", []), hook_y, cap_y)
+    srt = build_srt(words, start, end)
+    vtt = build_vtt(words, start, end)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also
     # break the filter syntax).
     work = Path(tempfile.mkdtemp(prefix="pk"))
     try:
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass)
+        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, srt, vtt)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str,
+               srt: str = "", vtt: str = "") -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
+    if srt:
+        (work / f"{name}.srt").write_text(srt, encoding="utf-8")
+    if vtt:
+        (work / f"{name}.vtt").write_text(vtt, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
@@ -289,6 +395,13 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
     cover_t = min(1.2, (end - start) / 2)
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{cover_t:.2f}", "-i", f"{name}.mp4", "-frames:v", "1",
          "-q:v", "3", f"{name}.jpg"], cwd=work)
-    for ext in ("mp4", "jpg", "ass"):
-        shutil.move(str(work / f"{name}.{ext}"), str(out_dir / f"{name}.{ext}"))
-    return {"file": f"{name}.mp4", "cover": f"{name}.jpg", "layout": layout}
+    for ext in ("mp4", "jpg", "ass", "srt", "vtt"):
+        src_f = work / f"{name}.{ext}"
+        if src_f.exists():
+            shutil.move(str(src_f), str(out_dir / f"{name}.{ext}"))
+    out = {"file": f"{name}.mp4", "cover": f"{name}.jpg", "layout": layout}
+    if (out_dir / f"{name}.srt").is_file():
+        out["srt"] = f"{name}.srt"
+    if (out_dir / f"{name}.vtt").is_file():
+        out["vtt"] = f"{name}.vtt"
+    return out

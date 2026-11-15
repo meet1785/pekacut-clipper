@@ -82,11 +82,15 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
         if total > limit_gb * 1e9:
             raise ValueError(f"That is more than {limit_gb:g} GB of clips. Download them in smaller groups.")
         base = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
-        name, n = f"{base}.mp4", 2
-        while name.lower() in seen:
-            name, n = f"{base} ({n}).mp4", n + 1
-        seen.add(name.lower())
-        files.append((f, name))
+        stem, n = base, 2
+        while f"{stem}.mp4".lower() in seen:
+            stem, n = f"{base} ({n})", n + 1
+        seen.add(f"{stem}.mp4".lower())
+        files.append((f, f"{stem}.mp4"))
+        for ext in ("srt", "vtt"):
+            sub_f = f.with_suffix(f".{ext}")
+            if sub_f.is_file():
+                files.append((sub_f, f"{stem}.{ext}"))
     if not files:
         raise ValueError("None of those clips are ready to download.")
     tmp = config.user_dir(ctx.uid()) / "tmp"

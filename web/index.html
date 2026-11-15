@@ -2149,8 +2149,10 @@ function drawClipDlg(full) {
         ${S.accounts.length ? `<div class="row">${S.accounts.map(a => `<label class="ck"><input type="checkbox" data-pacc value="${esc(a.id)}">${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>
           <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center"><button class="btn primary" data-act="postnow">${ic("send")}Post now</button><button class="btn" data-act="postqueue">Add to queue</button><div class="row" style="gap:4px;align-items:center"><input type="datetime-local" data-f="schedtime" class="input" style="padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);color:inherit" title="Pick schedule time"><button class="btn" data-act="postschedule">${ic("clock")}Schedule</button></div></div>`
           : `<p class="help">No accounts connected yet. Connect one in Settings.</p>`}
-        <div class="row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--line)">
-          ${c.status === "done" ? `<a class="btn" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>` : ""}
+        <div class="row" style="margin-top:auto;padding-top:8px;border-top:1px solid var(--line);gap:8px;flex-wrap:wrap">
+          ${c.status === "done" ? `<a class="btn" href="${m}${esc(c.file)}?download=1">${ic("down")}Download</a>
+          <a class="btn" href="/api/jobs/${j.id}/clips/${esc(c.id)}/subtitles?format=srt" download="${esc(c.id)}.srt" title="Download SubRip Subtitles">${ic("receipt")}Subtitles (.srt)</a>
+          <a class="btn" href="/api/jobs/${j.id}/clips/${esc(c.id)}/subtitles?format=vtt" download="${esc(c.id)}.vtt" title="Download WebVTT Subtitles">${ic("receipt")}WebVTT (.vtt)</a>` : ""}
           <button class="btn" data-act="copy" data-j="${j.id}" data-c="${esc(c.id)}">${ic("copy")}Copy post text</button></div>
       </div></div>`;
   } else if (D.sig !== sig) $("#stage").innerHTML = stage;

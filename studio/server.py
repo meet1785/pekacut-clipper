@@ -1008,12 +1008,47 @@ def delete_my_account(request: Request, body: dict = Body(...)):
 
 @app.get("/media/{jid}/{name}")
 def media_file(jid: str, name: str, download: int = 0):
-    if not re.fullmatch(r"[\w\-]+\.(mp4|jpg)", name):
+    if not re.fullmatch(r"[\w\-]+\.(mp4|jpg|srt|vtt|ass)", name):
         raise HTTPException(404)
     f = Path(_job_or_404(jid)["dir"]) / "clips" / name
     if not f.is_file():
         raise HTTPException(404)
-    return FileResponse(f, filename=name if download else None, headers={"Cache-Control": "private, max-age=300"})
+    media_type = None
+    if name.endswith(".srt"):
+        media_type = "application/x-subrip"
+    elif name.endswith(".vtt"):
+        media_type = "text/vtt"
+    return FileResponse(f, filename=name if download else None, media_type=media_type,
+                        headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/api/jobs/{jid}/clips/{cid}/subtitles")
+def clip_subtitles(jid: str, cid: str, format: str = "srt"):
+    fmt = format.lower().strip()
+    if fmt not in ("srt", "vtt"):
+        raise HTTPException(400, "Format must be 'srt' or 'vtt'.")
+    job = _job_or_404(jid)
+    clip = next((c for c in job.get("clips", []) if c["id"] == cid), None)
+    if not clip:
+        raise HTTPException(404, "No such clip")
+    cdir = Path(job["dir"]) / "clips"
+    sub_path = cdir / f"{cid}.{fmt}"
+    if not sub_path.is_file():
+        words_path = Path(job["dir"]) / "words.json"
+        if not words_path.is_file():
+            raise HTTPException(404, "No transcript words available for subtitles")
+        try:
+            words = json.loads(words_path.read_text(encoding="utf-8"))
+        except Exception:
+            raise HTTPException(500, "Could not read transcript words")
+        start, end = clip["start"], clip["end"]
+        content = render.build_srt(words, start, end) if fmt == "srt" else render.build_vtt(words, start, end)
+        cdir.mkdir(parents=True, exist_ok=True)
+        sub_path.write_text(content, encoding="utf-8")
+    media_type = "application/x-subrip" if fmt == "srt" else "text/vtt"
+    return FileResponse(sub_path, filename=f"{cid}.{fmt}", media_type=media_type,
+                        headers={"Content-Disposition": f'attachment; filename="{cid}.{fmt}"',
+                                 "Cache-Control": "private, max-age=300"})
 
 
 # ================================================================ creators and live recording
