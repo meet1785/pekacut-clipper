@@ -1437,10 +1437,40 @@ def add_posts(body: dict = Body(...)):
     clip = next((c for c in job["clips"] if c["id"] == body.get("clip")), None) if job else None
     if not clip or clip.get("status") != "done":
         raise HTTPException(404, "That clip is not ready")
-    made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")), due_at=body.get("due_at"))
+    made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")), due_at=body.get("due_at"), cloud=bool(body.get("cloud", True)))
     if not made:
         raise HTTPException(400, "Nothing was queued. Pick at least one account this clip has not already gone to.")
     return {"queued": len(made)}
+
+
+@app.post("/api/jobs/{jid}/auto-schedule")
+def auto_schedule_job(jid: str, body: dict = Body({})):
+    job = jobs.get(jid)
+    if not job:
+        raise HTTPException(404, "Video not found")
+    all_accs = accounts.list_accounts()
+    if not all_accs:
+        raise HTTPException(400, "No accounts connected. Connect YouTube in Settings first.")
+    acc_ids = body.get("accounts") or [all_accs[0]["id"]]
+    unposted = []
+    for c in job.get("clips", []):
+        if c.get("status") == "done":
+            active = [p for p in (c.get("posts") or {}).values() if p.get("status") in ("posted", "scheduled")]
+            if not active:
+                unposted.append(c)
+    if not unposted:
+        return {"scheduled": 0, "message": "All clips from this video are already posted or scheduled."}
+    import datetime
+    now_dt = datetime.datetime.now()
+    start_offset = 1 if now_dt.hour >= 18 else 0
+    total_queued = 0
+    for idx, clip in enumerate(unposted):
+        target_day = now_dt.date() + datetime.timedelta(days=start_offset + idx)
+        target_dt = datetime.datetime.combine(target_day, datetime.time(18, 30))
+        ts = target_dt.timestamp()
+        made = posting.enqueue(job, clip, acc_ids, due_at=ts, cloud=bool(body.get("cloud", True)))
+        total_queued += len(made)
+    return {"scheduled": len(unposted), "queued_posts": total_queued}
 
 
 @app.post("/api/posts/{pid}/{action}")

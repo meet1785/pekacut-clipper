@@ -1731,6 +1731,7 @@ function jobHtml(j) {
   const pic = j.thumb ? `<img src="/media/${esc(j.id)}/thumb.jpg" alt="" loading="lazy">` : ic(j.source?.type === "file" ? "film" : "link");
   return `<div class="job-head"><div class="jt"><span class="jthumb">${pic}${j.duration ? `<span class="du">${fmt(j.duration)}</span>` : ""}</span><div style="min-width:0"><h3>${esc(j.title || j.source.name)}</h3><p class="sub">${meta}</p></div></div>
       <div class="row" style="flex-wrap:nowrap;gap:4px">${busy ? "" : `
+        ${j.clips.some(c => c.status === "done" && !Object.values(c.posts || {}).some(p => p.status === "posted" || p.status === "scheduled")) ? `<button class="btn sm primary" data-act="autoschedule" data-j="${j.id}" title="Auto-schedule unposted clips at peak engagement times (6:30 PM daily)">${ic("clock")}Auto-schedule</button>` : ""}
         ${j.clips.some(c => c.status === "done") ? `<button class="btn sm icon ghost" data-act="dlall" data-j="${j.id}" title="Download all clips of this video" aria-label="Download all clips of this video">${ic("down")}</button>` : ""}
         <button class="btn sm icon ghost" data-act="deljob" data-j="${j.id}" title="Delete" aria-label="Delete this video and its clips">${ic("trash")}</button>
         <label class="selck" title="Select this video and its clips"><input type="checkbox" data-sel="j:${j.id}" ${sel().has("j:" + j.id) ? "checked" : ""} aria-label="Select this video"></label>`}</div></div>
@@ -2320,6 +2321,29 @@ document.addEventListener("click", async e => {
       await api(`/api/jobs/${d.j}/clips/${encodeURIComponent(d.c)}`, {method:"DELETE"});
       const j = jobOf(d.j); if (j) j.clips = j.clips.filter(c => c.id !== d.c);
       render(); toast("Clip deleted", "ok"); return tick();
+    }
+    if (a === "autoschedule") {
+      const j = jobOf(d.j);
+      if (!j) return;
+      if (!S.accounts.length) return toast("Connect YouTube in Settings first.", "bad");
+      const unposted = (j.clips || []).filter(c => c.status === "done" && !Object.values(c.posts || {}).some(p => p.status === "posted" || p.status === "scheduled"));
+      if (!unposted.length) return toast("All clips from this video are already posted or scheduled!", "ok");
+      if (!await ask("Auto-schedule clips?", `Schedule ${unposted.length} unposted clip${unposted.length > 1 ? "s" : ""} at peak engagement times (6:30 PM daily on consecutive days)?`, "Schedule now")) return;
+      b.disabled = true;
+      try {
+        const res = await send(`/api/jobs/${j.id}/auto-schedule`, {cloud: true});
+        if (res.scheduled) {
+          toast(`Scheduled ${res.scheduled} clip${res.scheduled > 1 ? "s" : ""} for 6:30 PM peak daily!`, "ok");
+        } else {
+          toast(res.message || "All clips are already scheduled.", "warn");
+        }
+      } catch (err) {
+        toast(err.message, "bad");
+      } finally {
+        b.disabled = false;
+        await tick();
+      }
+      return;
     }
     if (a === "dlall") return zipDownload((jobOf(d.j)?.clips || []).filter(c => c.status === "done").map(c => d.j + "." + c.id));
     if (a === "seldl") return zipDownload(selClips());
