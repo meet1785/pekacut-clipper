@@ -12,8 +12,12 @@ W, H = config.OUT_W, config.OUT_H
 
 # ASS colours are &HBBGGRR. `size` is the ASS font size (line height); _Font turns it into real pixels.
 STYLES = {
-    "bounce": {"label": "Bounce", "font": "Poppins ExtraBold", "size": 132, "base": "FFFFFF", "active": "00F0FF",
+    "bounce": {"label": "Bounce (MrBeast Yellow)", "font": "Poppins ExtraBold", "size": 132, "base": "FFFFFF", "active": "00F0FF",
                "strong": "FFFFFF", "outline": 7, "pop": 112, "upper": True, "per": 3},
+    "hormozi": {"label": "Hormozi (Viral Green)", "font": "Poppins ExtraBold", "size": 136, "base": "FFFFFF", "active": "00FF66",
+                "strong": "00F0FF", "outline": 8, "pop": 116, "upper": True, "per": 2},
+    "neon": {"label": "Cyber (Neon Cyan)", "font": "Anton", "size": 144, "base": "FFFFFF", "active": "FFFF00",
+             "strong": "3300FF", "outline": 7, "pop": 114, "upper": True, "per": 2},
     "hype": {"label": "Hype", "font": "Anton", "size": 152, "base": "FFFFFF", "active": "3C3CFF",
              "strong": "00D7FF", "outline": 7, "pop": 114, "upper": True, "per": 2},
     "clean": {"label": "Clean", "font": "Poppins ExtraBold", "size": 100, "base": "FFFFFF", "active": "6BD7FF",
@@ -78,7 +82,12 @@ def install_fonts():
             shutil.copyfile(f, config.FONTS_DIR / f.name)
 
 
-LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)"}
+LAYOUTS = {
+    "blur": "Full frame + blurred fill",
+    "split": "Split screen (podcast / interview 2-person stack)",
+    "zoom": "Zoomed in + blurred fill",
+    "crop": "Fill the screen (centre crop)",
+}
 
 
 def _ts(t):
@@ -209,8 +218,10 @@ def build_vtt(words: list, start: float, end: float) -> str:
 
 def geometry(src_w, src_h, layout):
     """Where the video sits in the 1080x1920 frame, and where hook and captions go."""
-    if src_h >= src_w and layout != "crop":
+    if src_h >= src_w and layout not in ("crop", "split"):
         layout = "crop"  # already vertical or square: nothing to gain from a blurred fill
+    if layout == "split":
+        return layout, H, 200, 1420
     if layout == "blur":
         fg_h = min(H, int(round(W * src_h / src_w / 2)) * 2)
     elif layout == "zoom":
@@ -330,6 +341,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 def _filter(layout, fg_h):
     if layout == "crop":
         return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
+    if layout == "split":
+        return (f"[0:v]fps={config.OUT_FPS},split=2[left][right];"
+                f"[left]crop=iw/2:ih:0:0,scale={W}:960:force_original_aspect_ratio=increase,crop={W}:960[top];"
+                f"[right]crop=iw/2:ih:iw/2:0,scale={W}:960:force_original_aspect_ratio=increase,crop={W}:960[bot];"
+                f"[top][bot]vstack,setsar=1[v0];")
     return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
             f"[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,"
             f"scale={W}:{H},eq=brightness=-0.14:saturation=1.15[bg];"

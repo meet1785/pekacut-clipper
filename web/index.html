@@ -1679,7 +1679,7 @@ function clipHtml(j, c) {
   const key = `c:${j.id}:${c.id}`, busyClip = c.status === "queued" || c.status === "rendering";
   return `<article class="clip ${sel().has(key) ? "picked" : ""}">
     <button class="shot" data-act="openclip" ${a} aria-label="Open clip: ${esc(c.title || c.hook)}">${body}
-      <span class="badge l ${scoreCls(c.score)}" title="AI score">${c.score || "Hand"}</span><span class="badge r">${fmt(c.end - c.start)}</span></button>
+      <span class="badge l ${scoreCls(c.score)}" title="Virality Score: ${c.score || 'Hand'}${c.hook_score ? ` (🪝 Hook: ${c.hook_score}, 🌊 Flow: ${c.flow_score}, 🔥 Trend: ${c.trend_score})` : ''}">${c.score || "Hand"}</span><span class="badge r">${fmt(c.end - c.start)}</span></button>
     <div class="clip-body">
       <div class="hook">${esc(c.hook || "Untitled clip")}</div>
       <div class="ttl">${esc(c.title)}</div>
@@ -2132,7 +2132,13 @@ function drawClipDlg(full) {
   if (full) {
     dlg.innerHTML = `<div class="editor"><div class="stage" id="stage">${stage}</div>
       <div class="panel">
-        <div class="job-head" style="margin:0"><div><span class="badge ${scoreCls(c.score)}" style="position:static">${c.judges ? "Words " + c.judges.words + (c.judges.reaction ? " · Reaction " + c.judges.reaction : "") : c.score ? "Score " + c.score : "Clipped by hand"}</span>
+        <div class="job-head" style="margin:0"><div>
+          <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
+            <span class="badge ${scoreCls(c.score)}" style="position:static">${c.judges ? "Words " + c.judges.words + (c.judges.reaction ? " · Reaction " + c.judges.reaction : "") : c.score ? "Virality Score: " + c.score : "Clipped by hand"}</span>
+            ${c.hook_score ? `<span class="pill" style="font-size:11px" title="Opening 0-3s hook intensity">🪝 Hook: ${c.hook_score}</span>` : ""}
+            ${c.flow_score ? `<span class="pill" style="font-size:11px" title="Standalone coherence & pacing">🌊 Flow: ${c.flow_score}</span>` : ""}
+            ${c.trend_score ? `<span class="pill" style="font-size:11px" title="Emotional punch & viral trend appeal">🔥 Trend: ${c.trend_score}</span>` : ""}
+          </div>
           <p class="sub" style="margin-top:8px">${esc(c.reason || "")}</p></div><button class="btn icon ghost" data-act="closedlg" aria-label="Close">${ic("x")}</button></div>
         <h3>On the video</h3>
         <label class="f">Big text<input data-f="hook" value="${esc(c.hook)}"></label>

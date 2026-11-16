@@ -19,6 +19,9 @@ SCHEMA = {
             "start": {"type": "NUMBER"},
             "end": {"type": "NUMBER"},
             "score": {"type": "INTEGER"},
+            "hook_score": {"type": "INTEGER"},
+            "flow_score": {"type": "INTEGER"},
+            "trend_score": {"type": "INTEGER"},
             "category": {"type": "STRING"},
             "hook": {"type": "STRING"},
             "title": {"type": "STRING"},
@@ -127,8 +130,23 @@ def _tidy(c, s, e):
     tags = c.get("hashtags") if isinstance(c.get("hashtags"), list) else []
     tags = [re.sub(r"\W", "", str(h))[:30] for h in tags if isinstance(h, (str, int))]
     words = c.get("highlight_words") if isinstance(c.get("highlight_words"), list) else []
+    hook_sc = int(_num(c.get("hook_score"), 0))
+    flow_sc = int(_num(c.get("flow_score"), 0))
+    trend_sc = int(_num(c.get("trend_score"), 0))
+    overall_sc = int(_num(c.get("score"), 0))
+    if not hook_sc and overall_sc:
+        hook_sc = min(100, max(0, overall_sc + 3))
+    if not flow_sc and overall_sc:
+        flow_sc = min(100, max(0, overall_sc - 2))
+    if not trend_sc and overall_sc:
+        trend_sc = min(100, max(0, overall_sc))
+    if (hook_sc or flow_sc or trend_sc) and not overall_sc:
+        overall_sc = int(round(hook_sc * 0.45 + flow_sc * 0.35 + trend_sc * 0.20))
     return {
-        "start": s, "end": e, "score": max(0, min(100, int(_num(c.get("score"))))),
+        "start": s, "end": e, "score": max(0, min(100, overall_sc)),
+        "hook_score": max(0, min(100, hook_sc)),
+        "flow_score": max(0, min(100, flow_sc)),
+        "trend_score": max(0, min(100, trend_sc)),
         "category": cat if cat in CATEGORIES else "other",
         "hook": roman.to_roman(_text(c.get("hook"), 60)).upper(), "title": roman.to_roman(_text(c.get("title"), 100)),
         "description": roman.to_roman(_text(c.get("description"), 300)),
@@ -296,7 +314,8 @@ def fallback_by_loudness(db, words, n, max_len, duration):
             continue
         if not any(s <= w["s"] <= e for w in words):
             continue
-        picks.append({"start": s, "end": e, "score": 50, "category": "other", "hook": "WAIT FOR IT",
+        picks.append({"start": s, "end": e, "score": 50, "hook_score": 55, "flow_score": 45, "trend_score": 50,
+                      "category": "other", "hook": "WAIT FOR IT",
                       "title": "Loud moment", "description": "", "hashtags": [], "highlight_words": [],
                       "reason": "Picked by loudness because the AI was unavailable."})
         if len(picks) >= n:
