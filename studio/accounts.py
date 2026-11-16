@@ -338,13 +338,13 @@ def _yt_token(acc) -> str:
     return acc["access_token"]
 
 
-def youtube_upload(acc, path: Path, title: str, description: str, tags: list, privacy: str, publish_at: str = None):
+def youtube_upload(acc, path: Path, title: str, description: str, tags: list, privacy: str, publish_at: str = None, category_id: str = "24"):
     token = _yt_token(acc)
     status = {"privacyStatus": "private" if publish_at else privacy, "selfDeclaredMadeForKids": False}
     if publish_at:
         status["publishAt"] = publish_at
     meta = {"snippet": {"title": re.sub(r"[<>]", "", title)[:100] or "Clip", "description": re.sub(r"[<>]", "", description)[:4900],
-                        "tags": tags[:15], "categoryId": "20"},
+                        "tags": tags[:15], "categoryId": str(category_id or "24")},
             "status": status}
     size = path.stat().st_size
     start = _check(httpx.post("https://www.googleapis.com/upload/youtube/v3/videos",

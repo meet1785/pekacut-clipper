@@ -107,9 +107,32 @@ def on_clip_ready(job, clip):
         creators.log(c["id"], f"Queued for {len(made)} account(s): {clip.get('title') or clip.get('hook')}")
 
 
-def _caption(clip, creator):
-    tags = " ".join("#" + h for h in clip.get("hashtags", []))
-    return "\n\n".join(x for x in (clip.get("description", ""), tags, creator.get("post_footer", "")) if x)
+def _caption(clip, creator, job=None):
+    parts = []
+    desc = clip.get("description", "").strip()
+    if desc:
+        parts.append(desc)
+    # YouTube Fair Use & Attribution compliance
+    if job:
+        uploader = job.get("uploader") or ""
+        source = job.get("source") or {}
+        url = source.get("url") or ""
+        credits = []
+        if uploader:
+            credits.append(f"Original Creator: {uploader}")
+        if url:
+            credits.append(f"Original Video: {url}")
+        if credits:
+            parts.append("\n".join(credits))
+    tags = " ".join("#" + h for h in clip.get("hashtags", [])[:8])
+    if tags:
+        parts.append(tags)
+    footer = creator.get("post_footer", "").strip()
+    if footer:
+        parts.append(footer)
+    else:
+        parts.append("Transformative clip edited for commentary & highlights. All credits to original owners.")
+    return "\n\n".join(parts)
 
 
 def _post(p):
@@ -124,7 +147,7 @@ def _post(p):
                 raise RuntimeError("That account was disconnected.")
             path = Path(job["dir"]) / "clips" / clip["file"]
             creator = creators.get(job["creator"]) or dict(creators.DEFAULTS, name="clips")
-            title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator)
+            title, cap = clip.get("title") or clip.get("hook") or "Clip", _caption(clip, creator, job)
             if acc["platform"] == "youtube":
                 rid, url = accounts.youtube_upload(acc, path, title, cap + "\n\n#Shorts", clip.get("hashtags", []), creator["privacy"], publish_at=p.get("publish_at"))
             elif acc["platform"] == "instagram":
