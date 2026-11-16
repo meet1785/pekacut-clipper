@@ -97,6 +97,15 @@ class _Quiet:
 
 def _ydl(opts):
     import yt_dlp
+    cookie_candidates = [
+        config.DATA_DIR / "cookies.txt",
+        config.DATA_DIR / "youtube_cookies.txt",
+        config.ROOT / "cookies.txt",
+        Path("/content/cookies.txt"),
+        Path("/content/drive/MyDrive/PeakCut_Data/cookies.txt"),
+    ]
+    cookie_file = next((p for p in cookie_candidates if p.exists() and p.stat().st_size > 0), None)
+
     # a channel or playlist link is answered as "a list" straight away, never walked video by video
     base = {
         "noplaylist": True, "quiet": True, "no_warnings": True, "logger": _Quiet(),
@@ -105,9 +114,16 @@ def _ydl(opts):
         "source_address": "0.0.0.0",
         "downloader_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
         "postprocessor_args": {"ffmpeg_i": ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]},
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv"]}},
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["tv", "web_embedded", "android", "ios"],
+                "player_skip": ["webpage", "configs"]
+            }
+        },
         "concurrent_fragment_downloads": 4,
     }
+    if cookie_file:
+        base["cookiefile"] = str(cookie_file)
     opts = dict(opts)
     if "extractor_args" in opts:
         ea = dict(base["extractor_args"])
