@@ -50,34 +50,36 @@ Most checks should return []. Only return a moment you would stop scrolling for.
 """
 
 RULES = """
-Core Strategy for Standalone, High-Retention Clips:
-1. STANDALONE COHERENCE (Must make complete sense to a stranger):
-   - NEVER start on dangling pronouns or mid-thought references ("And then he...", "Because of that...", "So like I said...").
-     The viewer has not seen the rest of the video; the clip MUST open with a clear subject, clear setup, or self-explanatory context.
-   - 3-PART NARRATIVE ARC:
-     * Hook (first 3s): An intriguing question, bold claim, challenge setup, or sudden action that creates a curiosity gap.
-     * Escalation: The story, tension, debate, or action develops naturally without trailing into unrelated topics.
-     * Payoff & Resolution: The punchline, reveal, reaction, victory, defeat, or key takeaway.
-   - CLEAN BOUNDARIES: Start on the first word of the setup sentence. End right after the payoff/reaction finishes.
-     NEVER cut off in the middle of a sentence, thought, or reaction. NEVER trail into the next scene.
+Core Strategy for Standalone, High-Retention Clips (YouTube Shorts & Reels Algorithm):
+1. THE 1.5-SECOND SWIPE TEST (Critical for Seed Views Breakout):
+   - In the Shorts feed, viewers swipe away in less than 1.5 seconds if not instantly hooked.
+   - The opening sentence MUST be high-energy, explosive, controversial, or present an immediate high-stakes curiosity gap.
+   - NEVER start on slow filler, pleasantries, rambling, or dangling context ("So basically...", "And then...", "Like I said...").
+   - The opening subject MUST be immediately obvious to a complete stranger.
 
-2. TIMING & DURATION:
-   - Each clip is {min_len} to {max_len} seconds. The highest-retention sweet spot is 20 to 45 seconds.
-   - Use the [seconds] timestamps from the transcript for start and end.
+2. STANDALONE NARRATIVE ARC & CLEAN BOUNDARIES:
+   - Hook (0-3s): A striking claim, question, challenge setup, or sudden conflict.
+   - Escalation (4-20s): Fast-paced development without dead air or trailing off.
+   - Climax / Payoff: The punchline, victory, failure, shock reaction, or reveal.
+   - End boundary: End IMMEDIATELY after the punchline/payoff finishes. Do not include post-reaction wind-down or scene transitions.
 
-3. QUALITY OVER QUANTITY:
+3. OPTIMAL VIRAL DURATION & LOOPABILITY:
+   - Sweet spot: 18 to 35 seconds. Shorter, high-density clips achieve 95-120% Average Percentage Viewed (APV) via looping, which is the #1 metric to trigger YouTube Shorts algorithm expansion.
+   - When possible, choose moments where the ending naturally flows back into the opening hook for seamless loop potential.
+
+4. QUALITY OVER QUANTITY:
    - Skip channel intros, sponsor reads, "like and subscribe" plugs, and slow dead air.
    - If nothing in this stretch is genuinely engaging or standalone, return [].
 
-4. METADATA:
-   - score: 0-100 (how likely a stranger keeps watching; high scores 80-100 reserved for moments with strong hooks and clear payoffs).
-   - hook: at most 5 words, ALL CAPS, bold curiosity-gap headline shown as big text overlay on the video.
-   - title: at most 70 characters, compelling social media title.
+5. METADATA THAT CRACKS THE ALGORITHM:
+   - score: 0-100 (Be strict: 85-100 reserved ONLY for undeniable viral moments with explosive hooks and high retention).
+   - hook: at most 5 words, ALL CAPS, bold curiosity-gap headline shown as big text overlay on the video (e.g. "HE BET EVERYTHING", "NO ONE SAW THIS COMING").
+   - title: at most 50 characters, intense curiosity gap or emotional hook. Must NOT exceed 50 chars so it is not truncated on mobile screens.
    - description: 1-2 punchy sentences summarizing the moment.
-   - hashtags: 5 relevant trending tags without the # sign.
-   - highlight_words: 3 to 6 impactful spoken words from the clip.
+   - hashtags: 4-6 relevant trending tags without the # sign (e.g. ["Shorts", "Trending", "Comedy", "Viral"]).
+   - highlight_words: 3 to 6 impactful spoken words from the clip to emphasize in captions.
    - category: one of funny, fail, clutch, rage, shock, take, story, other.
-   - reason: one short sentence explaining why this moment will hook a stranger.
+   - reason: one short sentence explaining why this moment will achieve >75% VVSA and >100% APV.
 
 Write hook, title, description, hashtags and highlight_words in English. If the video is in Hindi or Urdu,
 write them in Romanized Hinglish (e.g. "yaar ye kya hai"), never in Devanagari or Urdu script.
